@@ -108,7 +108,7 @@ func _build_ui() -> void:
 		btn.position = Vector2(x, 8)
 		btn.size = Vector2(90, 40)
 		btn.modulate = Color(0.9, 0.9, 0.9)
-		var picked_item := item
+		var picked_item: String = item
 		btn.pressed.connect(func() -> void: _pick_ingredient(picked_item))
 		layer.add_child(btn)
 		ui["icon_" + item] = btn
@@ -288,7 +288,7 @@ func _click_machine(m: Node2D) -> void:
 		return
 	if m.step_index == 0 and drag_item.begins_with("ingredient:"):
 		# Ingredient in de schrotmolen deponeren
-		var item := drag_item.split(":")[1]
+		var item: String = drag_item.split(":")[1]
 		m.add_ingredient(item)
 		cancel_drag()
 		# check of recept compleet is
