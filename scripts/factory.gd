@@ -14,6 +14,7 @@ const STEP_COLORS := [
 ]
 const RECIPE := {"grain": 2, "hops": 1, "yeast": 1}
 const ING_NAMES := {"grain": "Graan", "hops": "Hop", "yeast": "Gist"}
+const ING_SHORT := {"grain": "Gr", "hops": "Hp", "yeast": "Gi"}
 const ING_COLORS := {
 	"grain": Color(0.80, 0.65, 0.30),
 	"hops": Color(0.40, 0.70, 0.30),
@@ -40,13 +41,10 @@ var drag_source: Node2D = null
 var ghost: ColorRect = null
 
 func _ready() -> void:
-	randomize()
 	_build_floor()
 	_build_machines()
 	_build_storage()
-	_build_shop_panel()
-	_build_order_panel()
-	_build_hud()
+	_build_ui()
 	cam = Camera2D.new()
 	cam.zoom = Vector2(1, 1)
 	cam.position = Vector2(COLS * CELL * 0.5, ROWS * CELL * 0.5)
@@ -54,7 +52,7 @@ func _ready() -> void:
 	cam.make_current()
 	_update_hud()
 
-## ---------- Bouw ----------
+## ---------- Wereld ----------
 
 func _build_floor() -> void:
 	for y in ROWS:
@@ -84,66 +82,112 @@ func _build_storage() -> void:
 	add_child(box)
 	ui["storage_box"] = box
 	var lbl := _make_label("Bier: 0", Vector2(11 * CELL, 7 * CELL + 4), 12)
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(lbl)
 	ui["storage_label"] = lbl
 
-func _build_shop_panel() -> void:
-	var panel := _make_panel(Vector2(16, 16), Vector2(340, 104), "Leverancier")
-	add_child(panel)
-	var x := 120.0
+## ---------- UI (screen-space, altijd bovenop) ----------
+
+func _build_ui() -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 10
+	add_child(layer)
+	ui["layer"] = layer
+
+	# HUD boven: geld + klikbare ingredienten-iconen + orderknop
+	var hud := Panel.new()
+	hud.position = Vector2(0, 0)
+	hud.size = Vector2(1280, 56)
+	layer.add_child(hud)
+	ui["money"] = _make_label("", Vector2(16, 17), 16)
+	layer.add_child(ui["money"])
+
+	var x := 180.0
 	for item in ["grain", "hops", "yeast"]:
 		var btn := Button.new()
-		btn.position = Vector2(x, 34)
-		btn.size = Vector2(56, 56)
-		btn.modulate = ING_COLORS[item]
-		btn.tooltip_text = "%s kopen — %d goud (je hebt er %d)" % [ING_NAMES[item], ING_PRICES[item], inv[item]]
-		btn.pressed.connect(func() -> void: _buy(item))
-		panel.add_child(btn)
-		x += 72.0
-
-func _build_order_panel() -> void:
-	var panel := _make_panel(Vector2(16, 136), Vector2(340, 130), "Order: De Zythoeker")
-	add_child(panel)
-	var lbl := _make_label("", Vector2(120, 148), 13)
-	add_child(lbl)
-	ui["order_label"] = lbl
-	var area := ColorRect.new()
-	area.color = Color(0.20, 0.25, 0.20, 0.95)
-	area.position = Vector2(120, 172)
-	area.size = Vector2(220, 70)
-	area.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(area)
-	ui["order_area"] = area
-	panel.add_child(_make_label("Sleep bier hierheen om te leveren", Vector2(128, 196), 11))
-
-func _build_hud() -> void:
-	var layer := CanvasLayer.new()
-	add_child(layer)
-	var panel := _make_panel(Vector2(400, 16), Vector2(864, 40), "")
-	layer.add_child(panel)
-	ui["money"] = _make_label("", Vector2(416, 26), 15)
-	layer.add_child(ui["money"])
-	ui["inv"] = _make_label("", Vector2(530, 26), 15)
+		btn.position = Vector2(x, 8)
+		btn.size = Vector2(90, 40)
+		btn.modulate = Color(0.9, 0.9, 0.9)
+		var picked_item := item
+		btn.pressed.connect(func() -> void: _pick_ingredient(picked_item))
+		layer.add_child(btn)
+		ui["icon_" + item] = btn
+		x += 100.0
+	ui["inv"] = _make_label("", Vector2(180, 62), 13)
 	layer.add_child(ui["inv"])
-	ui["tip"] = _make_label("", Vector2(16, 688), 13)
+
+	# Leverancier: knop die panel toont
+	var shop_btn := Button.new()
+	shop_btn.position = Vector2(560, 8)
+	shop_btn.size = Vector2(130, 40)
+	shop_btn.text = "Leverancier"
+	layer.add_child(shop_btn)
+	shop_btn.pressed.connect(func() -> void: _toggle_shop())
+	ui["shop_btn"] = shop_btn
+
+	# Leveranciers-panel (verborgen)
+	var shop := Panel.new()
+	shop.position = Vector2(560, 56)
+	shop.size = Vector2(340, 120)
+	shop.visible = false
+	layer.add_child(shop)
+	shop.add_child(_make_label("Koop ingrediënten", Vector2(12, 8), 14))
+	var sx := 20.0
+	for item in ["grain", "hops", "yeast"]:
+		var b := Button.new()
+		b.position = Vector2(sx, 36)
+		b.size = Vector2(100, 60)
+		b.modulate = ING_COLORS[item]
+		b.text = ""
+		b.tooltip_text = "%s kopen — %d goud" % [ING_NAMES[item], ING_PRICES[item]]
+		b.pressed.connect(func() -> void: _buy(item))
+		shop.add_child(b)
+		shop.add_child(_make_label("%s\n%d goud" % [ING_NAMES[item], ING_PRICES[item]], Vector2(sx + 8, 40), 11))
+		sx += 110.0
+	ui["shop"] = shop
+
+	# Order-panel rechtsboven
+	var order := Panel.new()
+	order.position = Vector2(960, 8)
+	order.size = Vector2(310, 120)
+	layer.add_child(order)
+	order.add_child(_make_label("Order: De Zythoeker", Vector2(12, 8), 14))
+	ui["order_label"] = _make_label("", Vector2(12, 30), 13)
+	order.add_child(ui["order_label"])
+	var area := Button.new()
+	area.position = Vector2(12, 54)
+	area.size = Vector2(286, 54)
+	area.text = "Sleep hier bier om te leveren"
+	layer.add_child(area)
+	area.pressed.connect(func() -> void: _deliver())
+	ui["order_area"] = area
+
+	# Tooltip onderaan
+	ui["tip"] = _make_label("", Vector2(16, 690), 13)
 	layer.add_child(ui["tip"])
 
-func _make_panel(pos: Vector2, size: Vector2, title: String) -> Panel:
-	var p := Panel.new()
-	p.position = pos
-	p.size = size
-	if title != "":
-		p.add_child(_make_label(title, Vector2(8, 4), 14))
-	return p
+func _toggle_shop() -> void:
+	ui["shop"].visible = not ui["shop"].visible
 
 func _make_label(text: String, pos: Vector2, size: int) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.position = pos
 	l.add_theme_font_size_override("font_size", size)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return l
 
 ## ---------- Spelersacties ----------
+
+func _pick_ingredient(item: String) -> void:
+	if drag_item == "" and inv[item] > 0:
+		inv[item] -= 1
+		start_drag("ingredient:" + item, 1, null, ING_COLORS[item])
+		_update_hud()
+	elif drag_item == "ingredient:" + item:
+		_return_drag()
+		cancel_drag()
+		_update_hud()
 
 func _buy(item: String) -> void:
 	if money >= ING_PRICES[item]:
@@ -164,8 +208,10 @@ func consume_recipe() -> void:
 
 func _update_hud() -> void:
 	ui["money"].text = "Geld: %d" % money
-	ui["inv"].text = "Graan: %d   Hop: %d   Gist: %d" % [inv["grain"], inv["hops"], inv["yeast"]]
-	ui["order_label"].text = "Pils %d/%d  (%d goud/unit)" % [delivered, ORDER_SIZE, UNIT_PRICE]
+	for item in ["grain", "hops", "yeast"]:
+		var btn: Button = ui["icon_" + item]
+		btn.text = "%s: %d" % [ING_NAMES[item], inv[item]]
+	ui["order_label"].text = "Pils %d/%d leveren  (%d goud/unit)" % [delivered, ORDER_SIZE, UNIT_PRICE]
 	ui["storage_label"].text = "Bier: %d" % storage_beer
 
 ## ---------- Drag & drop ----------
@@ -216,22 +262,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		cam.position -= event.relative / cam.zoom
 
 func _handle_left_click(pos: Vector2) -> void:
-	# 1. Order-gebied (levert bier uit de drag)
-	if drag_item == "beer" and _in_order_area(pos):
-		_deliver()
-		return
-	# 2. Machines
 	for m in machines:
 		if m.is_clicked(pos):
 			_click_machine(m)
 			return
-	# 3. Opslagbox: bier oppakken
 	if drag_item == "" and _in_storage(pos) and storage_beer > 0:
 		storage_beer -= 1
 		_update_hud()
 		start_drag("beer", 1, null, Color(0.85, 0.6, 0.1))
-	# 4. Leeg gebied met drag: annuleren behalve als drag begon bij klik — niets doen
-	if drag_item == "":
+	elif drag_item != "":
+		# klik in leeg gebied: annuleren en teruggeven
+		_return_drag()
 		cancel_drag()
 
 func _click_machine(m: Node2D) -> void:
@@ -240,21 +281,30 @@ func _click_machine(m: Node2D) -> void:
 			return
 		m.buffer_ready = false
 		if m.step_index == STEP_NAMES.size() - 1:
-			# Rijpen klaar → bier gaat naar opslag (batch)
 			storage_beer += BATCH_SIZE
 			_update_hud()
 		else:
 			start_drag("batch:%d" % m.step_index, BATCH_SIZE, m, STEP_COLORS[m.step_index + 1])
-	if m.step_index == 0 and drag_item == "":
-		# Schrotmolen: recept-check en start (ingredienten uit je voorraad)
-		if has_recipe():
-			consume_recipe()
+		return
+	if m.step_index == 0 and drag_item.begins_with("ingredient:"):
+		# Ingredient in de schrotmolen deponeren
+		var item := drag_item.split(":")[1]
+		m.add_ingredient(item)
+		cancel_drag()
+		# check of recept compleet is
+		var complete := true
+		for k in RECIPE:
+			if m.input.get(k, 0) < RECIPE[k]:
+				complete = false
+				break
+		if complete:
+			for k in RECIPE:
+				m.input[k] -= RECIPE[k]
+			m.reset_input()
 			m.working = true
 			m.time_left = STEP_TIMES[0]
-		else:
-			_tip("Recept Pils nodig: 2 graan, 1 hop, 1 gist")
+		return
 	elif drag_item.begins_with("batch:") and m.step_index == int(drag_item.split(":")[1]) + 1:
-		# Output vorige stap → input deze machine
 		drag_item = ""
 		drag_count = 0
 		if ghost:
@@ -265,21 +315,17 @@ func _click_machine(m: Node2D) -> void:
 		m.time_left = STEP_TIMES[m.step_index]
 
 func _deliver() -> void:
-	var take := mini(drag_count, ORDER_SIZE - delivered)
-	delivered += take
-	drag_count -= take
-	money += take * UNIT_PRICE
-	if delivered >= ORDER_SIZE:
-		delivered = 0
-		_tip("Order geleverd! Nieuwe order binnengekomen.")
-	if drag_count <= 0:
-		cancel_drag()
-	_update_hud()
-
-func _in_order_area(pos: Vector2) -> bool:
-	var a: ColorRect = ui["order_area"]
-	var gp := a.global_position
-	return pos.x >= gp.x and pos.x <= gp.x + a.size.x and pos.y >= gp.y and pos.y <= gp.y + a.size.y
+	if drag_item == "beer" and drag_count > 0:
+		var take := mini(drag_count, ORDER_SIZE - delivered)
+		delivered += take
+		drag_count -= take
+		money += take * UNIT_PRICE
+		if delivered >= ORDER_SIZE:
+			delivered = 0
+			_tip("Order geleverd!")
+		if drag_count <= 0:
+			cancel_drag()
+		_update_hud()
 
 func _in_storage(pos: Vector2) -> bool:
 	var b: ColorRect = ui["storage_box"]
@@ -299,10 +345,16 @@ func _process(delta: float) -> void:
 		if m.is_clicked(pos):
 			tip = m.tooltip()
 			break
-	if tip != "":
-		ui["tip"].text = tip
-	else:
-		ui["tip"].text = ""
+	ui["tip"].text = tip if tip != "" else _hint_text()
+
+func _hint_text() -> String:
+	if drag_item.begins_with("ingredient:"):
+		return "Sleep naar de schrotmolen (rechtsklik = terug)"
+	if drag_item.begins_with("batch:"):
+		return "Sleep naar de volgende machine (rechtsklik = terug)"
+	if drag_item == "beer":
+		return "Sleep naar de order rechtsboven (rechtsklik = terug)"
+	return ""
 
 func _tip(text: String) -> void:
 	ui["tip"].text = text
