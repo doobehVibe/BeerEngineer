@@ -224,6 +224,7 @@ func start_drag(item: String, count: int, source: Node2D, color: Color) -> void:
 	ghost = ColorRect.new()
 	ghost.color = color
 	ghost.size = Vector2(26, 26)
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(ghost)
 
 func cancel_drag() -> void:
