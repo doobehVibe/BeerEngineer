@@ -61,7 +61,7 @@ func _update_input_label() -> void:
 	var f := get_parent()
 	var parts := []
 	for item in f.RECIPE:
-		var have := input.get(item, 0)
+		var have: int = input.get(item, 0)
 		if have > 0:
 			parts.append("%s %d/%d" % [f.ING_SHORT[item], have, f.RECIPE[item]])
 	input_label.text = " ".join(parts)
